@@ -1,0 +1,262 @@
+// Reaper JSFX: SimpleFmSynth
+// (c) 2025 by SynthieJunkie
+// MIT License
+
+desc:SynthieJunkie - SimpleFmSynth v1.0
+desc:SimpleFmSynth v1.0
+
+slider1:Polyphony=8<1,64,1>Polyphony
+slider2:Amplitude=0.5<0,1,0.01>Amplitude
+
+slider4:FM=0<0,1,0.01>FM
+slider5:Mix=1<0,1,0.01>Mix
+
+slider7:Wave1=0<0,3,0{Sine,Triangle,Sawtooth,Square}>Wave 1
+slider8:Wave2=0<0,3,0{Sine,Triangle,Sawtooth,Square}>Wave 2
+
+slider10:Transpose1=0<-36,36,1>Transpose 1
+slider11:Transpose2=0<-36,36,1>Transpose 2
+
+slider13:Attack1=0<0,1,0.01>Attack 1
+slider14:Decay1=0<0,1,0.01>Decay 1
+slider15:Sustain1=1<0,1,0.01>Sustain 1
+slider16:Release1=0.01<0,1,0.01>Release 1
+
+slider18:Attack2=0<0,1,0.01>Attack 2
+slider19:Decay2=0<0,1,0.01>Decay 2
+slider20:Sustain2=1<0,1,0.01>Sustain 2
+slider21:Release2=0.01<0,1,0.01>Release 2
+
+
+@init
+Voice_Count = Polyphony;
+Voice_Size = 11;
+Memory[Voice_Count * Voice_Size] = 0;
+
+Offset_Active = 0;
+Offset_Pitch = 1;
+Offset_Velocity = 2;
+
+Offset_Frequency1 = 3;
+Offset_Phase1 = 4;
+Offset_State1 = 5;
+Offset_Gain1 = 6;
+
+Offset_Frequency2 = 7;
+Offset_Phase2 = 8;
+Offset_State2 = 9;
+Offset_Gain2 = 10;
+
+
+
+@slider
+sliderchange(Polyphony) ?
+(
+  Voice_Count = Polyphony;
+  Memory[Voice_Count * Voice_Size] = 0;
+);
+
+
+
+@block
+while (midirecv(Offset, msg1, msg2, msg3))
+(
+  Status = msg1 & 0xF0;
+  Pitch = msg2;
+  Velocity = msg3;
+
+  //Convert NoteOn with Velocity 0 to NoteOff
+  Status == 0x90 && Velocity == 0 ? Status = 0x80;
+
+  //NoteOff
+  Status == 0x80 ?
+  (
+    Index = 0;
+    Found = 0;
+
+    loop(Voice_Count,
+      Offset = Index * Voice_Size;
+      Index += 1;
+
+      Memory[Offset + Offset_Active] == 1 && Memory[Offset + Offset_Pitch] == Pitch ?
+      (
+        Memory[Offset + Offset_Active] = 0;
+        Memory[Offset + Offset_State1] = 4;
+        Memory[Offset + Offset_State2] = 4;
+      );
+    );
+  );
+
+  //NoteOn
+  Status == 0x90 ?
+  (
+    Index = 0;
+    Found = 0;
+
+    loop(Voice_Count,
+      Offset = Index * Voice_Size;
+      Index += 1;
+
+      Found == 0 && Memory[Offset + Offset_Active] == 0 && Memory[Offset + Offset_State1] == 0 && Memory[Offset + Offset_State2] == 0 ?
+      (
+        Memory[Offset + Offset_Active] = 1;
+        Memory[Offset + Offset_Pitch] = Pitch;
+        Memory[Offset + Offset_Velocity] = Velocity;
+
+        Memory[Offset + Offset_Frequency1] = 440 * pow(2, ((Pitch + Transpose1) - 69) / 12);
+        Memory[Offset + Offset_Phase1] = 0;
+        Memory[Offset + Offset_State1] = 1;
+        Memory[Offset + Offset_Gain1] = 0;
+
+        Memory[Offset + Offset_Frequency2] = 440 * pow(2, ((Pitch + Transpose2) - 69) / 12);
+        Memory[Offset + Offset_Phase2] = 0;
+        Memory[Offset + Offset_State2] = 1;
+        Memory[Offset + Offset_Gain2] = 0;
+
+        Found = 1;
+      );
+    );
+  );
+);
+
+
+
+@sample
+spl0 = 0;
+spl1 = 0;
+
+play_state == 1 || play_state == 5 ?
+(
+  Index = 0;
+
+  loop(Voice_Count,
+    Offset = Index * Voice_Size;
+    Index += 1;
+
+    Memory[Offset + Offset_Active] == 1 || Memory[Offset + Offset_State1] == 4 || Memory[Offset + Offset_State2] == 4 ?
+    (
+      //Envelope 1
+      State1 = Memory[Offset + Offset_State1];
+      Gain1 = Memory[Offset + Offset_Gain1];
+
+      State1 == 1 ?
+      (
+        Gain1 += 1 / (Attack1 * srate);
+        Gain1 >= 1 ?
+        (
+          Gain1 = 1;
+          State1 = 2;
+        );
+      );
+
+      State1 == 2 ?
+      (
+        Gain1 -= (1 - Sustain1) / (Decay1 * srate);
+        Gain1 <= Sustain1 ?
+        (
+          Gain1 = Sustain1;
+          State1 = 3;
+        );
+      );
+
+      State1 == 4 ?
+      (
+        Gain1 -= Sustain1 / (Release1 * srate);
+        Sustain1 == 0 ? Gain1 = 0;
+
+        Gain1 <= 0 ?
+        (
+          Gain1 = 0;
+          State1 = 0;
+
+          Memory[Offset + Offset_Active] = 0;
+        );
+      );
+
+      Memory[Offset + Offset_State1] = State1;
+      Memory[Offset + Offset_Gain1] = Gain1;
+
+
+
+      //Envelope 2
+      State2 = Memory[Offset + Offset_State2];
+      Gain2 = Memory[Offset + Offset_Gain2];
+
+      State2 == 1 ?
+      (
+        Gain2 += 1 / (Attack2 * srate);
+        Gain2 >= 1 ?
+        (
+          Gain2 = 1;
+          State2 = 2;
+        );
+      );
+
+      State2 == 2 ?
+      (
+        Gain2 -= (1 - Sustain2) / (Decay2 * srate);
+        Gain2 <= Sustain2 ?
+        (
+          Gain2 = Sustain2;
+          State2 = 3;
+        );
+      );
+
+      State2 == 4 ?
+      (
+        Gain2 -= Sustain2 / (Release2 * srate);
+        Sustain2 == 0 ? Gain2 = 0;
+
+        Gain2 <= 0 ?
+        (
+          Gain2 = 0;
+          State2 = 0;
+
+          Memory[Offset + Offset_Active] = 0;
+        );
+      );
+
+      Memory[Offset + Offset_State2] = State2;
+      Memory[Offset + Offset_Gain2] = Gain2;
+
+
+
+      //Oscillator
+      Sample1 = 0;
+      Sample2 = 0;
+
+      Wave1 == 0 ? Sample1 = sin(Memory[Offset + Offset_Phase1] * 2 * $PI);
+      Wave1 == 1 ? Sample1 = 1 - (4 * Abs(Memory[Offset + Offset_Phase1]));
+      Wave1 == 2 ? Sample1 = Memory[Offset + Offset_Phase1] * 2;
+      Wave1 == 3 ? Memory[Offset + Offset_Phase1] >= 0 ? Sample1 = 1 : Sample1 = -1;
+      Sample1 *= Gain1;
+
+      Wave2 == 0 ? Sample2 = sin(Memory[Offset + Offset_Phase2] * 2 * $PI);
+      Wave2 == 1 ? Sample2 = 1 - (4 * Abs(Memory[Offset + Offset_Phase2]));
+      Wave2 == 2 ? Sample2 = Memory[Offset + Offset_Phase2] * 2;
+      Wave2 == 3 ? Memory[Offset + Offset_Phase2] >= 0 ? Sample2 = 1 : Sample2 = -1;
+      Sample2 *= Gain2;
+
+      Sample = Sample1 * (1 - Mix) + Sample2 * Mix;
+      Sample *= Memory[Offset + Offset_Velocity] / 127;
+
+      Sample *= Amplitude;
+
+      spl0 += Sample;
+      spl1 += Sample;
+
+
+
+      Memory[Offset + Offset_Phase1] += Memory[Offset + Offset_Frequency1] / srate;
+      Memory[Offset + Offset_Phase1] >= 0.5 ? Memory[Offset + Offset_Phase1] -= 1;
+
+      Memory[Offset + Offset_Phase2] += Sample1 * FM * 0.1;
+      Memory[Offset + Offset_Phase2] >= 0.5 ? Memory[Offset + Offset_Phase2] -= 1;
+
+      Memory[Offset + Offset_Phase2] += Memory[Offset + Offset_Frequency2] / srate;
+      Memory[Offset + Offset_Phase2] >= 0.5 ? Memory[Offset + Offset_Phase2] -= 1;
+    );
+  );
+);
+
+
